@@ -4,7 +4,11 @@ import streamlit as st
 import tempfile
 import os
 from typing import Optional, List, Dict
+from dotenv import load_dotenv
 from driver import Driver
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class StreamlitMenu:
@@ -105,14 +109,17 @@ class StreamlitMenu:
             api_key_help = "Get your key from https://platform.openai.com/api-keys"
             models = ["gpt-3.5-turbo", "gpt-4", "gpt-4o"]
             service_key = "openai"
+            default_api_key = os.getenv("OPENAI_API_KEY", "")
         else:
             api_key_label = "Enter Google API Key:"
             api_key_help = "Get your key from https://aistudio.google.com/app/apikey"
             models = ["gemini-2.5-flash", "gemini-1.5-pro"]
             service_key = "gemini"
+            default_api_key = os.getenv("GEMINI_API_KEY", "")
 
         api_key = st.text_input(
             api_key_label,
+            value=default_api_key,
             type="password",
             help=api_key_help
         )

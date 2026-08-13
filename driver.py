@@ -69,11 +69,20 @@ class Driver:
             response = self.ai_interface.send_prompt(prompt_text)
 
             # Create result dictionary with original data plus response
-            result = {
-                **prompt_dict,
-                'response': response or 'Error: No response received',
-                'model': model
-            }
+            if response:
+                result = {
+                    **prompt_dict,
+                    'response': response,
+                    'error': None,
+                    'model': model
+                }
+            else:
+                result = {
+                    **prompt_dict,
+                    'response': None,
+                    'error': 'No response received (check API key and available credits)',
+                    'model': model
+                }
 
             results.append(result)
 
