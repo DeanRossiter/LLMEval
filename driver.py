@@ -59,8 +59,15 @@ class Driver:
         results = []
 
         for prompt_dict in prompts:
-            # Support both 'prompt' and 'prompts' column names
-            prompt_text = prompt_dict.get('prompt', '') or prompt_dict.get('prompts', '')
+            # Support multiple column name variations for prompts
+            # Try: 'prompt', 'prompts', 'English', 'text', or first text column
+            prompt_text = (
+                prompt_dict.get('prompt', '') or 
+                prompt_dict.get('prompts', '') or
+                prompt_dict.get('English', '') or
+                prompt_dict.get('text', '') or
+                next((v for k, v in prompt_dict.items() if k.lower() not in ['id', 'prompt id'] and v), '')
+            )
 
             if not prompt_text:
                 continue
