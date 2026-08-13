@@ -63,10 +63,20 @@ class StreamlitMenu:
         """Render the import prompts section."""
         st.header("Import Prompts")
 
-        uploaded_file = st.file_uploader(
-            "Upload a tab-delimited file with prompts:",
-            type=["txt", "tsv", "csv"]
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            uploaded_file = st.file_uploader(
+                "Upload a tab-delimited file with prompts:",
+                type=["txt", "tsv", "csv"]
+            )
+        with col2:
+            if st.button("Load Sample Data"):
+                try:
+                    prompts = self.driver.import_prompts("sample_data.tsv")
+                    st.session_state.prompts = prompts
+                    st.success(f"Successfully loaded {len(prompts)} sample prompts!")
+                except Exception as e:
+                    st.error(f"Error loading sample data: {str(e)}")
 
         if uploaded_file is not None:
             try:
@@ -85,6 +95,11 @@ class StreamlitMenu:
 
             except Exception as e:
                 st.error(f"Error importing file: {str(e)}")
+        
+        # Display loaded prompts if they exist
+        if st.session_state.prompts:
+            st.subheader("Loaded Prompts")
+            st.dataframe(st.session_state.prompts)
 
     def process_prompts_section(self) -> None:
         """Render the process prompts section."""
