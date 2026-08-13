@@ -166,6 +166,7 @@ class StreamlitMenu:
                 st.success("All prompts processed successfully!")
                 st.write("First result sample:")
                 st.write(st.session_state.results[0] if st.session_state.results else "No results")
+                st.write(f"Total results: {len(st.session_state.results)}")
 
             except Exception as e:
                 st.error(f"Error processing prompts: {str(e)}")
