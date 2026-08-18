@@ -16,7 +16,7 @@ class ChatGPTInterface(AIInterface):
             api_key: OpenAI API key. If not provided, uses OPENAI_API_KEY env var.
         """
         self.api_key = api_key or os.getenv('OPENAI_API_KEY')
-        self.model = 'gpt-3.5-turbo'
+        self.model = 'gpt-5.4-nano'
 
         if not self.api_key:
             raise ValueError(

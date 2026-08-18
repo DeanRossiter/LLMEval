@@ -107,13 +107,13 @@ class StreamlitMenu:
         if ai_service == "OpenAI (ChatGPT)":
             api_key_label = "Enter OpenAI API Key:"
             api_key_help = "Get your key from https://platform.openai.com/api-keys"
-            models = ["gpt-3.5-turbo", "gpt-4", "gpt-4o"]
+            models = ["gpt-5.4-nano"]
             service_key = "openai"
             default_api_key = os.getenv("OPENAI_API_KEY", "")
         else:
             api_key_label = "Enter Google API Key:"
             api_key_help = "Get your key from https://aistudio.google.com/app/apikey"
-            models = ["gemini-2.5-flash", "gemini-1.5-pro"]
+            models = ["gemini-3.6-flash", "gemini-1.5-pro"]
             service_key = "gemini"
             default_api_key = os.getenv("GEMINI_API_KEY", "")
 

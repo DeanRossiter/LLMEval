@@ -16,7 +16,7 @@ class GeminiInterface(AIInterface):
             api_key: Google API key. If not provided, uses GOOGLE_API_KEY env var.
         """
         self.api_key = api_key or os.getenv('GOOGLE_API_KEY')
-        self.model = 'gemini-1.5-flash'
+        self.model = 'gemini-3.6-flash'
 
         if not self.api_key:
             raise ValueError(
