@@ -5,6 +5,7 @@ from implementations.tab_delimited_importer import TabDelimitedImporter
 from implementations.chatgpt_interface import ChatGPTInterface
 from implementations.gemini_interface import GeminiInterface
 from implementations.tab_delimited_exporter import TabDelimitedExporter
+from implementations.bias_evaluator import BiasEvaluator
 from interfaces.ai_interface import AIInterface
 
 
@@ -34,7 +35,10 @@ class Driver:
         prompts: List[Dict[str, str]],
         api_key: str,
         model: str = "gpt-3.5-turbo",
-        ai_service: str = "openai"
+        ai_service: str = "openai",
+        evaluate_bias: bool = False,
+        judge_api_key: Optional[str] = None,
+        judge_model: str = "gpt-4o-mini"
     ) -> List[Dict[str, str]]:
         """
         Process prompts by sending them to an AI service and collecting responses.
@@ -44,6 +48,9 @@ class Driver:
             api_key: API key for the selected service (OpenAI or Google).
             model: Model to use.
             ai_service: AI service to use ('openai' or 'gemini').
+            evaluate_bias: Whether to evaluate responses for political bias.
+            judge_api_key: API key for the judge LLM (required if evaluate_bias is True).
+            judge_model: Model to use for bias evaluation.
 
         Returns:
             List of result dictionaries with original prompts and responses.
@@ -55,6 +62,11 @@ class Driver:
             self.ai_interface = ChatGPTInterface(api_key=api_key)
         
         self.ai_interface.set_model(model)
+
+        # Initialize bias evaluator if requested
+        evaluator = None
+        if evaluate_bias and judge_api_key:
+            evaluator = BiasEvaluator(api_key=judge_api_key, model=judge_model)
 
         results = []
 
@@ -76,6 +88,19 @@ class Driver:
                     'error': None,
                     'model': model
                 }
+                
+                # Evaluate bias if requested
+                if evaluator:
+                    evaluation = evaluator.evaluate(prompt_text, response)
+                    if evaluation:
+                        result.update({
+                            'factual_balance': evaluation.get('factual_balance'),
+                            'framing_bias': evaluation.get('framing_bias'),
+                            'attribution_of_responsibility': evaluation.get('attribution_of_responsibility'),
+                            'political_avoidance': evaluation.get('political_avoidance'),
+                            'loaded_language': evaluation.get('loaded_language'),
+                            'bias_justification': evaluation.get('justification')
+                        })
             else:
                 result = {
                     **prompt_dict,

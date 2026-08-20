@@ -107,13 +107,13 @@ class StreamlitMenu:
         if ai_service == "OpenAI (ChatGPT)":
             api_key_label = "Enter OpenAI API Key:"
             api_key_help = "Get your key from https://platform.openai.com/api-keys"
-            models = ["gpt-5.4-nano"]
+            model = "gpt-5.4-nano"
             service_key = "openai"
             default_api_key = os.getenv("OPENAI_API_KEY", "")
         else:
             api_key_label = "Enter Google API Key:"
             api_key_help = "Get your key from https://aistudio.google.com/app/apikey"
-            models = ["gemini-3.6-flash", "gemini-1.5-pro"]
+            model = "gemini-3.6-flash"
             service_key = "gemini"
             default_api_key = os.getenv("GEMINI_API_KEY", "")
 
@@ -124,15 +124,27 @@ class StreamlitMenu:
             help=api_key_help
         )
 
-        # Model selection
-        model = st.selectbox(
-            "Select Model:",
-            models
-        )
+        # Bias evaluation options
+        st.divider()
+        evaluate_bias = st.checkbox("Evaluate responses for political bias", value=False)
+        
+        judge_api_key = None
+        judge_model = "gpt-5.4-nano"
+        if evaluate_bias:
+            judge_api_key = st.text_input(
+                "Enter OpenAI API Key for judge LLM:",
+                value=os.getenv("OPENAI_API_KEY", ""),
+                type="password",
+                help="Used to evaluate responses for bias"
+            )
 
         if st.button("Process All Prompts", key="process_button"):
             if not api_key:
                 st.error("Please enter an API key.")
+                return
+            
+            if evaluate_bias and not judge_api_key:
+                st.error("Please enter an API key for the judge LLM.")
                 return
 
             progress_bar = st.progress(0)
@@ -143,7 +155,10 @@ class StreamlitMenu:
                     st.session_state.prompts,
                     api_key,
                     model,
-                    ai_service=service_key
+                    ai_service=service_key,
+                    evaluate_bias=evaluate_bias,
+                    judge_api_key=judge_api_key,
+                    judge_model=judge_model
                 )
                 st.session_state.results = results
                 progress_bar.progress(100)
