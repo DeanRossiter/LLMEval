@@ -4,6 +4,8 @@ from typing import List, Dict, Optional
 from implementations.tab_delimited_importer import TabDelimitedImporter
 from implementations.chatgpt_interface import ChatGPTInterface
 from implementations.gemini_interface import GeminiInterface
+from implementations.deepseek_interface import DeepSeekInterface
+from implementations.doubao_interface import DoubaoInterface
 from implementations.tab_delimited_exporter import TabDelimitedExporter
 from implementations.bias_evaluator import BiasEvaluator
 from interfaces.ai_interface import AIInterface
@@ -53,22 +55,20 @@ class Driver:
     def process_prompts(
         self,
         prompts: List[Dict[str, str]],
-        api_key: str,
-        model: str = "gpt-3.5-turbo",
-        ai_service: str = "openai",
+        responder_api_key: str,
+        responder_type: str = "openai-gpt-nano",
         evaluate_bias: bool = False,
         judge_api_key: Optional[str] = None,
-        judge_model: str = "gpt-4o-mini"
+        judge_model: str = "gpt-5.4-nano"
     ) -> List[Dict[str, str]]:
         """
-        Process prompts by sending them to an AI service and collecting responses.
+        Process prompts by sending them to an LLM responder and collecting responses.
         Handles both English and Mandarin prompts from the same row.
 
         Args:
-            prompts: List of prompt dictionaries with 'English' and 'Mandarin' columns.
-            api_key: API key for the selected service (OpenAI or Google).
-            model: Model to use.
-            ai_service: AI service to use ('openai' or 'gemini').
+            prompts: List of prompt dictionaries with 'prompt_english' and 'prompt_mandarin' columns.
+            responder_api_key: API key for the responder LLM.
+            responder_type: Type of responder ('openai-gpt-nano', 'gemini-3.1-flash-lite', 'deepseek-v4-flash', 'doubao-seed-2.0-lite').
             evaluate_bias: Whether to evaluate responses for political bias.
             judge_api_key: API key for the judge LLM (required if evaluate_bias is True).
             judge_model: Model to use for bias evaluation.
@@ -76,13 +76,21 @@ class Driver:
         Returns:
             List of result dictionaries with one entry per language per row.
         """
-        # Initialize AI interface based on service
-        if ai_service.lower() == 'gemini':
-            self.ai_interface = GeminiInterface(api_key=api_key)
+        # Initialize AI interface based on responder type
+        if responder_type == "openai-gpt-nano":
+            self.ai_interface = ChatGPTInterface(api_key=responder_api_key)
+            self.ai_interface.set_model("gpt-5.4-nano")
+        elif responder_type == "gemini-3.1-flash-lite":
+            self.ai_interface = GeminiInterface(api_key=responder_api_key)
+            self.ai_interface.set_model("gemini-3.1-flash-lite")
+        elif responder_type == "deepseek-v4-flash":
+            self.ai_interface = DeepSeekInterface(api_key=responder_api_key)
+            self.ai_interface.set_model("deepseek-v4-flash")
+        elif responder_type == "seed-2-0-lite-260428":
+            self.ai_interface = DoubaoInterface(api_key=responder_api_key)
+            self.ai_interface.set_model("seed-2-0-lite-260428")
         else:
-            self.ai_interface = ChatGPTInterface(api_key=api_key)
-        
-        self.ai_interface.set_model(model)
+            raise ValueError(f"Unknown responder type: {responder_type}")
 
         # Initialize bias evaluator if requested
         evaluator = None
@@ -113,7 +121,7 @@ class Driver:
                         'language': 'English',
                         'response': response,
                         'error': None,
-                        'model': model
+                        'responder': responder_type
                     }
                     
                     # Evaluate bias if requested
@@ -134,7 +142,7 @@ class Driver:
                         'language': 'English',
                         'response': None,
                         'error': 'No response received (check API key and available credits)',
-                        'model': model
+                        'responder': responder_type
                     }
                 
                 results.append(result)
@@ -154,7 +162,7 @@ class Driver:
                         'response': response,
                         'response_translated': translated_response,
                         'error': None,
-                        'model': model
+                        'responder': responder_type
                     }
                     
                     # Evaluate bias on the translated response
@@ -176,7 +184,7 @@ class Driver:
                         'response': None,
                         'response_translated': None,
                         'error': 'No response received (check API key and available credits)',
-                        'model': model
+                        'responder': responder_type
                     }
                 
                 results.append(result)

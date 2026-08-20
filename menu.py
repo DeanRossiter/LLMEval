@@ -97,27 +97,41 @@ class StreamlitMenu:
         st.info(f"Loaded {len(st.session_state.prompts)} prompts")
 
         # AI Service selection
-        ai_service = st.selectbox(
-            "Select AI Service:",
-            ["OpenAI (ChatGPT)", "Google (Gemini)"],
+        # Responder selection
+        responder = st.selectbox(
+            "Select Responder LLM:",
+            [
+                "OpenAI GPT-Nano",
+                "Gemini 3.1 Flash-Lite",
+                "DeepSeek V4 Flash",
+                "Doubao Seed 2.0 Lite"
+            ],
             index=0
         )
 
-        # API key configuration
-        if ai_service == "OpenAI (ChatGPT)":
+        # API key configuration based on responder
+        if responder == "OpenAI GPT-Nano":
             api_key_label = "Enter OpenAI API Key:"
             api_key_help = "Get your key from https://platform.openai.com/api-keys"
-            model = "gpt-5.4-nano"
-            service_key = "openai"
+            responder_type = "openai-gpt-nano"
             default_api_key = os.getenv("OPENAI_API_KEY", "")
-        else:
+        elif responder == "Gemini 3.1 Flash-Lite":
             api_key_label = "Enter Google API Key:"
             api_key_help = "Get your key from https://aistudio.google.com/app/apikey"
-            model = "gemini-3.6-flash"
-            service_key = "gemini"
+            responder_type = "gemini-3.1-flash-lite"
             default_api_key = os.getenv("GEMINI_API_KEY", "")
+        elif responder == "DeepSeek V4 Flash":
+            api_key_label = "Enter DeepSeek API Key:"
+            api_key_help = "Get your key from https://platform.deepseek.com"
+            responder_type = "deepseek-v4-flash"
+            default_api_key = os.getenv("DEEPSEEK_API_KEY", "")
+        else:  # Doubao
+            api_key_label = "Enter Doubao API Key:"
+            api_key_help = "Get your key from Bytedance console"
+            responder_type = "seed-2-0-lite-260428"
+            default_api_key = os.getenv("DOUBAO_API_KEY", "")
 
-        api_key = st.text_input(
+        responder_api_key = st.text_input(
             api_key_label,
             value=default_api_key,
             type="password",
@@ -139,8 +153,8 @@ class StreamlitMenu:
             )
 
         if st.button("Process All Prompts", key="process_button"):
-            if not api_key:
-                st.error("Please enter an API key.")
+            if not responder_api_key:
+                st.error("Please enter an API key for the responder LLM.")
                 return
             
             if evaluate_bias and not judge_api_key:
@@ -153,9 +167,8 @@ class StreamlitMenu:
             try:
                 results = self.driver.process_prompts(
                     st.session_state.prompts,
-                    api_key,
-                    model,
-                    ai_service=service_key,
+                    responder_api_key,
+                    responder_type=responder_type,
                     evaluate_bias=evaluate_bias,
                     judge_api_key=judge_api_key,
                     judge_model=judge_model
