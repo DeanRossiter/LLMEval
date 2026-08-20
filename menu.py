@@ -194,13 +194,19 @@ class StreamlitMenu:
             value="results.tsv"
         )
 
-        if st.button("Export Results", key="export_button"):
-            try:
-                self.driver.export_results(st.session_state.results, file_name)
-                st.success(f"Results exported to: {file_name}")
+        try:
+            # Generate TSV content
+            tsv_content = self.driver.exporter.export_results_to_string(st.session_state.results)
+            
+            st.download_button(
+                label="Download Results as TSV",
+                data=tsv_content,
+                file_name=file_name,
+                mime="text/tab-separated-values"
+            )
 
-            except Exception as e:
-                st.error(f"Error exporting results: {str(e)}")
+        except Exception as e:
+            st.error(f"Error preparing export: {str(e)}")
 
 
 def main() -> None:

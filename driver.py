@@ -30,6 +30,26 @@ class Driver:
         """
         return self.importer.import_prompts(file_path)
 
+    def _translate_to_english(self, text: str, judge_api_key: str, judge_model: str) -> str:
+        """
+        Translate Mandarin text to English using the judge LLM.
+
+        Args:
+            text: Text to translate (in Mandarin).
+            judge_api_key: API key for the judge LLM.
+            judge_model: Model to use for translation.
+
+        Returns:
+            Translated text in English.
+        """
+        translator = ChatGPTInterface(api_key=judge_api_key)
+        translator.set_model(judge_model)
+        
+        translation_prompt = f"Translate the following Mandarin text to English. Provide only the translation, nothing else:\n\n{text}"
+        translated = translator.send_prompt(translation_prompt)
+        
+        return translated if translated else text
+
     def process_prompts(
         self,
         prompts: List[Dict[str, str]],
@@ -42,9 +62,10 @@ class Driver:
     ) -> List[Dict[str, str]]:
         """
         Process prompts by sending them to an AI service and collecting responses.
+        Handles both English and Mandarin prompts from the same row.
 
         Args:
-            prompts: List of prompt dictionaries.
+            prompts: List of prompt dictionaries with 'English' and 'Mandarin' columns.
             api_key: API key for the selected service (OpenAI or Google).
             model: Model to use.
             ai_service: AI service to use ('openai' or 'gemini').
@@ -53,7 +74,7 @@ class Driver:
             judge_model: Model to use for bias evaluation.
 
         Returns:
-            List of result dictionaries with original prompts and responses.
+            List of result dictionaries with one entry per language per row.
         """
         # Initialize AI interface based on service
         if ai_service.lower() == 'gemini':
@@ -71,45 +92,94 @@ class Driver:
         results = []
 
         for prompt_dict in prompts:
-            # Support both 'prompt' and 'prompts' column names
-            prompt_text = prompt_dict.get('prompt', '') or prompt_dict.get('prompts', '')
+            # Get English and Mandarin prompts from columns (case-insensitive)
+            english_prompt = ''
+            mandarin_prompt = ''
+            
+            for key, value in prompt_dict.items():
+                key_lower = key.lower()
+                if key_lower == 'prompt_english':
+                    english_prompt = value
+                elif key_lower == 'prompt_mandarin':
+                    mandarin_prompt = value
 
-            if not prompt_text:
-                continue
-
-            # Get response from the AI service
-            response = self.ai_interface.send_prompt(prompt_text)
-
-            # Create result dictionary with original data plus response
-            if response:
-                result = {
-                    **prompt_dict,
-                    'response': response,
-                    'error': None,
-                    'model': model
-                }
+            # Process English prompt
+            if english_prompt:
+                response = self.ai_interface.send_prompt(english_prompt)
                 
-                # Evaluate bias if requested
-                if evaluator:
-                    evaluation = evaluator.evaluate(prompt_text, response)
-                    if evaluation:
-                        result.update({
-                            'factual_balance': evaluation.get('factual_balance'),
-                            'framing_bias': evaluation.get('framing_bias'),
-                            'attribution_of_responsibility': evaluation.get('attribution_of_responsibility'),
-                            'political_avoidance': evaluation.get('political_avoidance'),
-                            'loaded_language': evaluation.get('loaded_language'),
-                            'bias_justification': evaluation.get('justification')
-                        })
-            else:
-                result = {
-                    **prompt_dict,
-                    'response': None,
-                    'error': 'No response received (check API key and available credits)',
-                    'model': model
-                }
+                if response:
+                    result = {
+                        **prompt_dict,
+                        'language': 'English',
+                        'response': response,
+                        'error': None,
+                        'model': model
+                    }
+                    
+                    # Evaluate bias if requested
+                    if evaluator:
+                        evaluation = evaluator.evaluate(english_prompt, response)
+                        if evaluation:
+                            result.update({
+                                'factual_balance': evaluation.get('factual_balance'),
+                                'framing_bias': evaluation.get('framing_bias'),
+                                'attribution_of_responsibility': evaluation.get('attribution_of_responsibility'),
+                                'political_avoidance': evaluation.get('political_avoidance'),
+                                'loaded_language': evaluation.get('loaded_language'),
+                                'bias_justification': evaluation.get('justification')
+                            })
+                else:
+                    result = {
+                        **prompt_dict,
+                        'language': 'English',
+                        'response': None,
+                        'error': 'No response received (check API key and available credits)',
+                        'model': model
+                    }
+                
+                results.append(result)
 
-            results.append(result)
+            # Process Mandarin prompt
+            if mandarin_prompt:
+                # Send Mandarin prompt to AI (should get Mandarin response)
+                response = self.ai_interface.send_prompt(mandarin_prompt)
+                
+                if response:
+                    # Translate the Mandarin response to English using the judge LLM
+                    translated_response = self._translate_to_english(response, judge_api_key, judge_model)
+                    
+                    result = {
+                        **prompt_dict,
+                        'language': 'Mandarin',
+                        'response': response,
+                        'response_translated': translated_response,
+                        'error': None,
+                        'model': model
+                    }
+                    
+                    # Evaluate bias on the translated response
+                    if evaluator:
+                        evaluation = evaluator.evaluate(mandarin_prompt, translated_response)
+                        if evaluation:
+                            result.update({
+                                'factual_balance': evaluation.get('factual_balance'),
+                                'framing_bias': evaluation.get('framing_bias'),
+                                'attribution_of_responsibility': evaluation.get('attribution_of_responsibility'),
+                                'political_avoidance': evaluation.get('political_avoidance'),
+                                'loaded_language': evaluation.get('loaded_language'),
+                                'bias_justification': evaluation.get('justification')
+                            })
+                else:
+                    result = {
+                        **prompt_dict,
+                        'language': 'Mandarin',
+                        'response': None,
+                        'response_translated': None,
+                        'error': 'No response received (check API key and available credits)',
+                        'model': model
+                    }
+                
+                results.append(result)
 
         return results
 
