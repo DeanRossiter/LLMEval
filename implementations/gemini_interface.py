@@ -25,12 +25,12 @@ class GeminiInterface(AIInterface):
             )
 
         try:
-            from google import genai
+            import google.generativeai as genai
             self.client = genai.Client(api_key=self.api_key)
         except ImportError:
             raise ImportError(
                 "Google Generative AI library not installed. Install with: "
-                "pip install google-genai"
+                "pip install google-generativeai"
             )
 
     def send_prompt(self, prompt: str) -> Optional[str]:
