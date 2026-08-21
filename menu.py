@@ -60,8 +60,7 @@ class StreamlitMenu:
             [
                 "Import Prompts",
                 "Process Prompts",
-                "View Results",
-                "Export Results"
+                "View Results"
             ]
         )
 
@@ -71,8 +70,6 @@ class StreamlitMenu:
             self.process_prompts_section()
         elif menu_option == "View Results":
             self.view_results_section()
-        elif menu_option == "Export Results":
-            self.export_results_section()
 
     def import_prompts_section(self) -> None:
         """Render the import prompts section."""
@@ -380,7 +377,7 @@ class StreamlitMenu:
                     st.metric(responder_type, status_text, delta=f"{progress}%")
 
     def view_results_section(self) -> None:
-        """Render the view results section."""
+        """Render the view results section with download option."""
         st.header("View Results")
 
         if not st.session_state.results:
@@ -389,15 +386,11 @@ class StreamlitMenu:
 
         st.info(f"Displaying {len(st.session_state.results)} results")
         st.dataframe(st.session_state.results, width='stretch')
-
-    def export_results_section(self) -> None:
-        """Render the export results section."""
-        st.header("Export Results")
-
-        if not st.session_state.results:
-            st.warning("No results to export. Please process prompts first.")
-            return
-
+        
+        # Download section
+        st.divider()
+        st.subheader("Download Results")
+        
         col1, col2 = st.columns([3, 1])
         
         with col1:
@@ -429,7 +422,6 @@ class StreamlitMenu:
 
         except Exception as e:
             st.error(f"Error preparing export: {str(e)}")
-
 
 def main() -> None:
     """Entry point for the Streamlit menu."""
