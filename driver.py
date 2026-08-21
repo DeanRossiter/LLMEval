@@ -106,9 +106,9 @@ class Driver:
             
             for key, value in prompt_dict.items():
                 key_lower = key.lower()
-                if key_lower == 'prompt_english':
+                if key_lower == 'english_prompt':
                     english_prompt = value
-                elif key_lower == 'prompt_mandarin':
+                elif key_lower == 'mandarin_prompt':
                     mandarin_prompt = value
 
             # Process English prompt

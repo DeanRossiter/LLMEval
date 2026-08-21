@@ -111,48 +111,53 @@ class StreamlitMenu:
 
         st.info(f"Loaded {len(st.session_state.prompts)} prompts")
 
-        # AI Service selection
-        # Responder selection
-        responder = st.selectbox(
-            "Select Responder LLM:",
-            [
-                "OpenAI GPT-Nano",
-                "Gemini 3.1 Flash-Lite",
-                "DeepSeek V4 Flash",
-                "Doubao Seed 2.0 Lite"
-            ],
-            index=0
-        )
+        # Responder selection with checkboxes
+        st.subheader("Select Responder LLMs")
+        responder_options = {
+            "OpenAI GPT-Nano": {
+                "type": "openai-gpt-nano",
+                "env_var": "OPENAI_API_KEY",
+                "url": "https://platform.openai.com/api-keys"
+            },
+            "Gemini 3.1 Flash-Lite": {
+                "type": "gemini-3.1-flash-lite",
+                "env_var": "GEMINI_API_KEY",
+                "url": "https://aistudio.google.com/app/apikey"
+            },
+            "DeepSeek V4 Flash": {
+                "type": "deepseek-v4-flash",
+                "env_var": "DEEPSEEK_API_KEY",
+                "url": "https://platform.deepseek.com"
+            },
+            "Doubao Seed 2.0 Lite": {
+                "type": "seed-2-0-lite-260428",
+                "env_var": "DOUBAO_API_KEY",
+                "url": "https://bytedance.com"
+            }
+        }
 
-        # API key configuration based on responder
-        if responder == "OpenAI GPT-Nano":
-            api_key_label = "Enter OpenAI API Key:"
-            api_key_help = "Get your key from https://platform.openai.com/api-keys"
-            responder_type = "openai-gpt-nano"
-            default_api_key = os.getenv("OPENAI_API_KEY", "")
-        elif responder == "Gemini 3.1 Flash-Lite":
-            api_key_label = "Enter Google API Key:"
-            api_key_help = "Get your key from https://aistudio.google.com/app/apikey"
-            responder_type = "gemini-3.1-flash-lite"
-            default_api_key = os.getenv("GEMINI_API_KEY", "")
-        elif responder == "DeepSeek V4 Flash":
-            api_key_label = "Enter DeepSeek API Key:"
-            api_key_help = "Get your key from https://platform.deepseek.com"
-            responder_type = "deepseek-v4-flash"
-            default_api_key = os.getenv("DEEPSEEK_API_KEY", "")
-        else:  # Doubao
-            api_key_label = "Enter Doubao API Key:"
-            api_key_help = "Get your key from Bytedance console"
-            responder_type = "seed-2-0-lite-260428"
-            default_api_key = os.getenv("DOUBAO_API_KEY", "")
+        selected_responders = []
+        for responder_name in responder_options.keys():
+            if st.checkbox(responder_name, value=False, key=f"checkbox_{responder_name}"):
+                selected_responders.append(responder_name)
 
-        responder_api_key = st.text_input(
-            api_key_label,
-            value=default_api_key,
-            type="password",
-            help=api_key_help
-        )
+        if not selected_responders:
+            st.warning("Please select at least one responder LLM.")
 
+        # API key configuration for selected responders
+        st.subheader("API Keys")
+        responder_api_keys = {}
+        
+        for responder_name in selected_responders:
+            config = responder_options[responder_name]
+            api_key = st.text_input(
+                f"{responder_name} API Key:",
+                value=os.getenv(config["env_var"], ""),
+                type="password",
+                help=f"Get your key from {config['url']}"
+            )
+            responder_api_keys[config["type"]] = api_key
+        
         # Bias evaluation options
         st.divider()
         evaluate_bias = st.checkbox("Evaluate responses for political bias", value=False)
@@ -168,9 +173,15 @@ class StreamlitMenu:
             )
 
         if st.button("Process All Prompts", key="process_button"):
-            if not responder_api_key:
-                st.error("Please enter an API key for the responder LLM.")
+            if not selected_responders:
+                st.error("Please select at least one responder LLM.")
                 return
+            
+            # Validate all API keys are provided
+            for responder_type, api_key in responder_api_keys.items():
+                if not api_key:
+                    st.error(f"Please enter an API key for the selected responder.")
+                    return
             
             if evaluate_bias and not judge_api_key:
                 st.error("Please enter an API key for the judge LLM.")
@@ -180,20 +191,29 @@ class StreamlitMenu:
             status_text = st.empty()
 
             try:
-                results = self.driver.process_prompts(
-                    st.session_state.prompts,
-                    responder_api_key,
-                    responder_type=responder_type,
-                    evaluate_bias=evaluate_bias,
-                    judge_api_key=judge_api_key,
-                    judge_model=judge_model
-                )
-                st.session_state.results = results
-                progress_bar.progress(100)
+                all_results = []
+                total_responders = len(responder_api_keys)
+                
+                # Process with each selected responder
+                for idx, (responder_type, api_key) in enumerate(responder_api_keys.items()):
+                    status_text.text(f"Processing with responder {idx + 1} of {total_responders}...")
+                    
+                    results = self.driver.process_prompts(
+                        st.session_state.prompts,
+                        api_key,
+                        responder_type=responder_type,
+                        evaluate_bias=evaluate_bias,
+                        judge_api_key=judge_api_key,
+                        judge_model=judge_model
+                    )
+                    all_results.extend(results)
+                    
+                    progress = int((idx + 1) / total_responders * 100)
+                    progress_bar.progress(progress)
+
+                st.session_state.results = all_results
                 status_text.text("Processing complete!")
-                st.success("All prompts processed successfully!")
-                st.write("First result sample:")
-                st.write(st.session_state.results[0] if st.session_state.results else "No results")
+                st.success(f"All prompts processed successfully with {total_responders} responder(s)!")
                 st.write(f"Total results: {len(st.session_state.results)}")
 
             except Exception as e:
