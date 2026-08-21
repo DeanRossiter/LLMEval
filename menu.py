@@ -198,7 +198,7 @@ class StreamlitMenu:
                 for idx, (responder_type, api_key) in enumerate(responder_api_keys.items()):
                     status_text.text(f"Processing with responder {idx + 1} of {total_responders}...")
                     
-                    results = self.driver.process_prompts(
+                    results, fatal_error = self.driver.process_prompts(
                         st.session_state.prompts,
                         api_key,
                         responder_type=responder_type,
@@ -210,6 +210,12 @@ class StreamlitMenu:
                     
                     progress = int((idx + 1) / total_responders * 100)
                     progress_bar.progress(progress)
+                    
+                    if fatal_error:
+                        st.warning(f"Fatal error encountered with {responder_type}. Stopping this responder.")
+                        status_text.text(f"Responder {responder_type} stopped due to fatal error.")
+                        # Continue to next responder instead of stopping all
+                        continue
 
                 st.session_state.results = all_results
                 status_text.text("Processing complete!")
