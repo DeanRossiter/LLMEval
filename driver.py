@@ -1,12 +1,15 @@
 """Driver class that orchestrates the LLM prompt manager application."""
 
 from typing import List, Dict, Optional
+import time
 from implementations.tab_delimited_importer import TabDelimitedImporter
 from implementations.chatgpt_interface import ChatGPTInterface
 from implementations.gemini_interface import GeminiInterface
 from implementations.deepseek_interface import DeepSeekInterface
 from implementations.doubao_interface import DoubaoInterface
 from implementations.tab_delimited_exporter import TabDelimitedExporter
+from implementations.bias_evaluator import BiasEvaluator
+from interfaces.ai_interface import AIInterface
 from implementations.bias_evaluator import BiasEvaluator
 from interfaces.ai_interface import AIInterface
 
@@ -61,24 +64,56 @@ class Driver:
         error_lower = error_message.lower()
         return any(keyword in error_lower for keyword in fatal_keywords)
 
-    def _translate_to_english(self, text: str, judge_api_key: str, judge_model: str) -> tuple:
+    def _rate_limit_sleep(self, rate_limit_rpm: int, call_times: List[float]) -> None:
         """
-        Translate Mandarin text to English using the judge LLM.
+        Sleep if necessary to maintain the specified rate limit.
+        
+        Args:
+            rate_limit_rpm: Maximum requests per minute allowed.
+            call_times: List of timestamps of recent API calls (in seconds).
+        """
+        if rate_limit_rpm <= 0:
+            return
+        
+        # Current time
+        now = time.time()
+        
+        # Remove calls older than 60 seconds
+        call_times[:] = [t for t in call_times if now - t < 60]
+        
+        # If we've already made the maximum number of calls in the last minute, sleep
+        if len(call_times) >= rate_limit_rpm:
+            # Sleep until the oldest call is more than 60 seconds old
+            sleep_time = 60 - (now - call_times[0]) + 0.1  # Add 0.1s buffer
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+                # Clear old call times after sleeping
+                now = time.time()
+                call_times[:] = [t for t in call_times if now - t < 60]
+
+    def _translate_to_english(self, text: str, judge_client: AIInterface, judge_call_times: List[float], judge_rate_limit_rpm: int) -> tuple:
+        """
+        Translate Mandarin text to English using the shared judge LLM client.
 
         Args:
             text: Text to translate (in Mandarin).
-            judge_api_key: API key for the judge LLM.
-            judge_model: Model to use for translation.
+            judge_client: Shared ChatGPT client for translation.
+            judge_call_times: List of judge API call timestamps for rate limiting.
+            judge_rate_limit_rpm: Rate limit for judge calls (requests per minute).
 
         Returns:
             Tuple of (translated_text, error_message). error_message is None if successful.
         """
         try:
-            translator = ChatGPTInterface(api_key=judge_api_key)
-            translator.set_model(judge_model)
+            if not judge_client:
+                return None, "Translation failed: no judge client provided"
+            
+            # Apply rate limiting for judge
+            self._rate_limit_sleep(judge_rate_limit_rpm, judge_call_times)
+            judge_call_times.append(time.time())
             
             translation_prompt = f"Translate the following Mandarin text to English. Provide only the translation, nothing else:\n\n{text}"
-            translated = translator.send_prompt(translation_prompt)
+            translated = judge_client.send_prompt(translation_prompt)
             
             if translated:
                 return translated, None
@@ -94,8 +129,10 @@ class Driver:
         responder_api_key: str,
         responder_type: str = "openai-gpt-nano",
         evaluate_bias: bool = False,
-        judge_api_key: Optional[str] = None,
-        judge_model: str = "gpt-5.4-nano"
+        judge_client: Optional[AIInterface] = None,
+        evaluator: Optional[BiasEvaluator] = None,
+        rate_limit_rpm: int = 100,
+        judge_rate_limit_rpm: int = 2800
     ) -> tuple:
         """
         Process prompts by sending them to an LLM responder and collecting responses.
@@ -106,8 +143,10 @@ class Driver:
             responder_api_key: API key for the responder LLM.
             responder_type: Type of responder ('openai-gpt-nano', 'gemini-3.1-flash-lite', etc).
             evaluate_bias: Whether to evaluate responses for political bias.
-            judge_api_key: API key for the judge LLM (required if evaluate_bias is True).
-            judge_model: Model to use for bias evaluation.
+            judge_client: Shared ChatGPT client for translation (created externally).
+            evaluator: Shared BiasEvaluator instance (created externally).
+            rate_limit_rpm: Rate limit for responder (requests per minute).
+            judge_rate_limit_rpm: Rate limit for judge/translator (requests per minute).
 
         Returns:
             Tuple of (results_list, fatal_error_occurred).
@@ -134,16 +173,10 @@ class Driver:
             print(f"FATAL ERROR: {error_msg}")
             return [], True
 
-        # Initialize bias evaluator if requested
-        evaluator = None
-        if evaluate_bias and judge_api_key:
-            try:
-                evaluator = BiasEvaluator(api_key=judge_api_key, model=judge_model)
-            except Exception as e:
-                print(f"Warning: Could not initialize evaluator: {str(e)}")
-
         results = []
         fatal_error_occurred = False
+        responder_call_times = []  # Track responder API call times for rate limiting
+        judge_call_times = []      # Track judge API call times for rate limiting (translation + evaluation)
 
         # Process each prompt completely (English + Mandarin) before moving to next
         for prompt_idx, prompt_dict in enumerate(prompts):
@@ -160,6 +193,13 @@ class Driver:
 
             # ===== ENGLISH PROMPT =====
             if english_prompt:
+                print(f"[{responder_type}] Processing prompt {prompt_idx + 1}/{len(prompts)} - English")
+                
+                # Apply rate limiting for responder
+                self._rate_limit_sleep(rate_limit_rpm, responder_call_times)
+                responder_call_times.append(time.time())
+                
+                print(f"[{responder_type}] Sending English prompt to responder...")
                 english_response = self.ai_interface.send_prompt(english_prompt)
                 english_error = None
                 english_status = "success"
@@ -167,6 +207,7 @@ class Driver:
                 if not english_response:
                     english_status = "error_response"
                     english_error = "No response received (check API key and available credits)"
+                    print(f"[{responder_type}] Error: No response for English prompt")
                     
                     # Check if this is a fatal error
                     if self._is_fatal_error(english_error):
@@ -193,6 +234,11 @@ class Driver:
                 # Evaluate English response if successful and evaluator is available
                 if english_response and evaluator:
                     try:
+                        print(f"[{responder_type}] Evaluating English response for bias...")
+                        # Apply rate limiting for judge
+                        self._rate_limit_sleep(judge_rate_limit_rpm, judge_call_times)
+                        judge_call_times.append(time.time())
+                        
                         evaluation = evaluator.evaluate(english_prompt, english_response)
                         if evaluation:
                             english_result.update({
@@ -203,14 +249,23 @@ class Driver:
                                 'loaded_language': evaluation.get('loaded_language'),
                                 'bias_justification': evaluation.get('justification')
                             })
+                            print(f"[{responder_type}] English evaluation complete")
                     except Exception as e:
                         english_result['status'] = 'error_evaluation'
                         english_result['error'] = f"Evaluation failed: {str(e)}"
+                        print(f"[{responder_type}] Error evaluating English response: {str(e)}")
                 
                 results.append(english_result)
 
             # ===== MANDARIN PROMPT =====
             if mandarin_prompt:
+                print(f"[{responder_type}] Processing prompt {prompt_idx + 1}/{len(prompts)} - Mandarin")
+                
+                # Apply rate limiting for responder
+                self._rate_limit_sleep(rate_limit_rpm, responder_call_times)
+                responder_call_times.append(time.time())
+                
+                print(f"[{responder_type}] Sending Mandarin prompt to responder...")
                 mandarin_response = self.ai_interface.send_prompt(mandarin_prompt)
                 mandarin_error = None
                 mandarin_status = "success"
@@ -226,14 +281,18 @@ class Driver:
                         print(f"FATAL ERROR at row {prompt_idx}: {mandarin_error}")
                 
                 # Translate Mandarin response if successful
-                if mandarin_response and judge_api_key:
+                if mandarin_response and judge_client:
+                    print(f"[{responder_type}] Translating Mandarin response to English...")
                     translated_response, translation_error = self._translate_to_english(
-                        mandarin_response, judge_api_key, judge_model
+                        mandarin_response, judge_client, judge_call_times, judge_rate_limit_rpm
                     )
                     
                     if translation_error:
                         mandarin_status = "error_translation"
                         mandarin_error = translation_error
+                        print(f"[{responder_type}] Translation error: {translation_error}")
+                    else:
+                        print(f"[{responder_type}] Translation complete")
                 
                 # Create Mandarin result
                 mandarin_result = {
@@ -255,6 +314,11 @@ class Driver:
                 # Evaluate translated response if translation was successful and evaluator is available
                 if translated_response and evaluator:
                     try:
+                        print(f"[{responder_type}] Evaluating Mandarin response for bias...")
+                        # Apply rate limiting for judge
+                        self._rate_limit_sleep(judge_rate_limit_rpm, judge_call_times)
+                        judge_call_times.append(time.time())
+                        
                         evaluation = evaluator.evaluate(mandarin_prompt, translated_response)
                         if evaluation:
                             mandarin_result.update({
@@ -265,9 +329,11 @@ class Driver:
                                 'loaded_language': evaluation.get('loaded_language'),
                                 'bias_justification': evaluation.get('justification')
                             })
+                            print(f"[{responder_type}] Mandarin evaluation complete")
                     except Exception as e:
                         mandarin_result['status'] = 'error_evaluation'
                         mandarin_result['error'] = f"Evaluation failed: {str(e)}"
+                        print(f"[{responder_type}] Error evaluating Mandarin response: {str(e)}")
                 
                 results.append(mandarin_result)
             
@@ -320,7 +386,7 @@ class Driver:
 
         # Process prompts
         print("\n2. Processing prompts...")
-        results = self.process_prompts(prompts, api_key, model)
+        results, fatal_error = self.process_prompts(prompts, api_key, model)
         print(f"   Processed {len(results)} prompts")
 
         # Export results
