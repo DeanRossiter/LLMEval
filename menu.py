@@ -38,6 +38,8 @@ class StreamlitMenu:
             st.session_state.results = []
         if 'processing_active' not in st.session_state:
             st.session_state.processing_active = False
+        if 'processing_params' not in st.session_state:
+            st.session_state.processing_params = None
 
     def run(self) -> None:
         """Run the Streamlit menu interface."""
@@ -79,20 +81,10 @@ class StreamlitMenu:
         """Render the import prompts section."""
         st.header("Import Prompts")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            uploaded_file = st.file_uploader(
-                "Upload a tab-delimited file with prompts:",
-                type=["txt", "tsv", "csv"]
-            )
-        with col2:
-            if st.button("Load Sample Data"):
-                try:
-                    prompts = self.driver.import_prompts("sample_data.tsv")
-                    st.session_state.prompts = prompts
-                    st.success(f"Successfully loaded {len(prompts)} sample prompts!")
-                except Exception as e:
-                    st.error(f"Error loading sample data: {str(e)}")
+        uploaded_file = st.file_uploader(
+            "Upload a tab-delimited file with prompts:",
+            type=["txt", "tsv", "csv"]
+        )
 
         if uploaded_file is not None:
             try:
@@ -241,26 +233,30 @@ class StreamlitMenu:
                 st.error("Please enter an API key for the judge LLM.")
                 return
 
-            # Set processing flag to prevent interruption
+            # Store processing parameters in session state
+            st.session_state.processing_params = {
+                "selected_responders": selected_responders,
+                "responder_api_keys": responder_api_keys,
+                "responder_rate_limits": responder_rate_limits,
+                "evaluate_bias": evaluate_bias,
+                "judge_api_key": judge_api_key,
+                "judge_model": judge_model,
+                "judge_rate_limit": judge_rate_limit
+            }
             st.session_state.processing_active = True
+            st.rerun()
+        
+        # If processing was requested, run it now with locked UI
+        if st.session_state.processing_active and st.session_state.processing_params:
+            params = st.session_state.processing_params
+            selected_responders = params["selected_responders"]
+            responder_api_keys = params["responder_api_keys"]
+            responder_rate_limits = params["responder_rate_limits"]
+            evaluate_bias = params["evaluate_bias"]
+            judge_api_key = params["judge_api_key"]
+            judge_model = params["judge_model"]
+            judge_rate_limit = params["judge_rate_limit"]
             
-            # Create judge client and evaluator once (shared across all responders)
-            judge_client = None
-            evaluator = None
-            if evaluate_bias:
-                try:
-                    if not judge_api_key:
-                        st.error("Please enter an API key for the judge LLM.")
-                        st.session_state.processing_active = False
-                        return
-                    judge_client = ChatGPTInterface(api_key=judge_api_key)
-                    judge_client.set_model(judge_model)
-                    evaluator = BiasEvaluator(api_key=judge_api_key, model=judge_model)
-                except Exception as e:
-                    st.error(f"Failed to initialize judge LLM: {str(e)}")
-                    st.session_state.processing_active = False
-                    return
-
             # Create UI placeholders for real-time updates
             status_placeholder = st.empty()
             progress_area = st.empty()
@@ -278,6 +274,21 @@ class StreamlitMenu:
                 # Create progress callback
                 def update_progress(responder_type: str, current: int, total: int) -> None:
                     responder_progress[responder_type]["current"] = current
+                
+                # Create judge client and evaluator once (shared across all responders)
+                judge_client = None
+                evaluator = None
+                if evaluate_bias:
+                    try:
+                        judge_client = ChatGPTInterface(api_key=judge_api_key)
+                        judge_client.set_model(judge_model)
+                        evaluator = BiasEvaluator(api_key=judge_api_key, model=judge_model)
+                    except Exception as e:
+                        st.error(f"Failed to initialize judge LLM: {str(e)}")
+                        st.session_state.processing_active = False
+                        st.session_state.processing_params = None
+                        st.rerun()
+                        return
                 
                 # Process responders concurrently using ThreadPoolExecutor
                 with ThreadPoolExecutor(max_workers=total_responders) as executor:
@@ -345,6 +356,7 @@ class StreamlitMenu:
                 # Processing complete
                 st.session_state.results = all_results
                 st.session_state.processing_active = False
+                st.session_state.processing_params = None
                 st.session_state.redirect_to_results = True
                 
                 with progress_area.container():
@@ -354,12 +366,12 @@ class StreamlitMenu:
                 
                 status_placeholder.empty()
                 st.success(f"✅ Processing complete! {len(st.session_state.results)} total results from {total_responders} responder(s)")
+                st.rerun()
 
             except Exception as e:
                 st.session_state.processing_active = False
+                st.session_state.processing_params = None
                 st.error(f"Error processing prompts: {str(e)}")
-                
-            finally:
                 st.rerun()
 
     def view_results_section(self) -> None:
@@ -377,34 +389,17 @@ class StreamlitMenu:
         st.divider()
         st.subheader("Download Results")
         
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            file_name = st.text_input(
-                "Enter output file name:",
-                value="results.tsv",
-                key="export_filename"
-            )
-        
-        with col2:
-            st.markdown("**Format:** TSV")
-
         try:
             # Generate TSV content
             tsv_content = self.driver.exporter.export_results_to_string(st.session_state.results)
             
-            # Use the filename from the text input
-            output_filename = file_name if file_name else "results.tsv"
-            
             st.download_button(
                 label="Download Results as TSV",
                 data=tsv_content,
-                file_name=output_filename,
+                file_name="results.tsv",
                 mime="text/tab-separated-values",
                 key="download_tsv_button"
             )
-            
-            st.info(f"📥 File will be downloaded as: **{output_filename}**")
 
         except Exception as e:
             st.error(f"Error preparing export: {str(e)}")
