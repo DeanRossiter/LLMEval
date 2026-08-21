@@ -398,21 +398,34 @@ class StreamlitMenu:
             st.warning("No results to export. Please process prompts first.")
             return
 
-        file_name = st.text_input(
-            "Enter output file name:",
-            value="results.tsv"
-        )
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            file_name = st.text_input(
+                "Enter output file name:",
+                value="results.tsv",
+                key="export_filename"
+            )
+        
+        with col2:
+            st.markdown("**Format:** TSV")
 
         try:
             # Generate TSV content
             tsv_content = self.driver.exporter.export_results_to_string(st.session_state.results)
             
+            # Use the filename from the text input
+            output_filename = file_name if file_name else "results.tsv"
+            
             st.download_button(
                 label="Download Results as TSV",
                 data=tsv_content,
-                file_name=file_name,
-                mime="text/tab-separated-values"
+                file_name=output_filename,
+                mime="text/tab-separated-values",
+                key="download_tsv_button"
             )
+            
+            st.info(f"📥 File will be downloaded as: **{output_filename}**")
 
         except Exception as e:
             st.error(f"Error preparing export: {str(e)}")
