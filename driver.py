@@ -1,6 +1,6 @@
 """Driver class that orchestrates the LLM prompt manager application."""
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Callable
 import time
 from implementations.tab_delimited_importer import TabDelimitedImporter
 from implementations.chatgpt_interface import ChatGPTInterface
@@ -132,7 +132,8 @@ class Driver:
         judge_client: Optional[AIInterface] = None,
         evaluator: Optional[BiasEvaluator] = None,
         rate_limit_rpm: int = 100,
-        judge_rate_limit_rpm: int = 2800
+        judge_rate_limit_rpm: int = 2800,
+        progress_callback: Optional[Callable] = None
     ) -> tuple:
         """
         Process prompts by sending them to an LLM responder and collecting responses.
@@ -147,6 +148,7 @@ class Driver:
             evaluator: Shared BiasEvaluator instance (created externally).
             rate_limit_rpm: Rate limit for responder (requests per minute).
             judge_rate_limit_rpm: Rate limit for judge/translator (requests per minute).
+            progress_callback: Optional callback function called as progress_callback(responder_type, current_idx, total) after each prompt.
 
         Returns:
             Tuple of (results_list, fatal_error_occurred).
@@ -336,6 +338,10 @@ class Driver:
                         print(f"[{responder_type}] Error evaluating Mandarin response: {str(e)}")
                 
                 results.append(mandarin_result)
+            
+            # Report progress after each prompt is fully processed
+            if progress_callback:
+                progress_callback(responder_type, prompt_idx + 1, len(prompts))
             
             # Stop processing if we hit a fatal error
             if fatal_error_occurred:

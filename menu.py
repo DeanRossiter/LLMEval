@@ -38,8 +38,6 @@ class StreamlitMenu:
             st.session_state.results = []
         if 'processing_active' not in st.session_state:
             st.session_state.processing_active = False
-        if 'activity_log' not in st.session_state:
-            st.session_state.activity_log = []
 
     def run(self) -> None:
         """Run the Streamlit menu interface."""
@@ -54,15 +52,21 @@ class StreamlitMenu:
             "Automatically send prompts to multiple LLMs and analyze responses."
         )
 
-        # Sidebar navigation
-        menu_option = st.sidebar.radio(
-            "Select an option:",
-            [
-                "Import Prompts",
-                "Process Prompts",
-                "View Results"
-            ]
-        )
+        # Auto-route to view results after processing completes
+        if st.session_state.get('redirect_to_results', False):
+            st.session_state.redirect_to_results = False
+            menu_option = "View Results"
+        else:
+            # Sidebar navigation - disable during processing
+            menu_option = st.sidebar.radio(
+                "Select an option:",
+                [
+                    "Import Prompts",
+                    "Process Prompts",
+                    "View Results"
+                ],
+                disabled=st.session_state.processing_active
+            )
 
         if menu_option == "Import Prompts":
             self.import_prompts_section()
@@ -103,7 +107,6 @@ class StreamlitMenu:
                 st.session_state.prompts = prompts
 
                 st.success(f"Successfully imported {len(prompts)} prompts!")
-                st.dataframe(prompts)
 
             except Exception as e:
                 st.error(f"Error importing file: {str(e)}")
@@ -150,7 +153,7 @@ class StreamlitMenu:
 
         selected_responders = []
         for responder_name in responder_options.keys():
-            if st.checkbox(responder_name, value=False, key=f"checkbox_{responder_name}"):
+            if st.checkbox(responder_name, value=False, key=f"checkbox_{responder_name}", disabled=st.session_state.processing_active):
                 selected_responders.append(responder_name)
 
         if not selected_responders:
@@ -174,7 +177,8 @@ class StreamlitMenu:
                     value=os.getenv(config["env_var"], ""),
                     type="password",
                     help=f"Get your key from {config['url']}",
-                    key=f"api_key_{responder_type}"
+                    key=f"api_key_{responder_type}",
+                    disabled=st.session_state.processing_active
                 )
                 responder_api_keys[responder_type] = api_key
             
@@ -185,13 +189,14 @@ class StreamlitMenu:
                     value=default_rate_limit,
                     min_value=1,
                     step=100,
-                    key=f"rate_limit_{responder_type}"
+                    key=f"rate_limit_{responder_type}",
+                    disabled=st.session_state.processing_active
                 )
                 responder_rate_limits[responder_type] = rate_limit
         
         # Bias evaluation options
         st.divider()
-        evaluate_bias = st.checkbox("Evaluate responses for political bias", value=False)
+        evaluate_bias = st.checkbox("Evaluate responses for political bias", value=False, disabled=st.session_state.processing_active)
         
         judge_client = None
         evaluator = None
@@ -207,7 +212,8 @@ class StreamlitMenu:
                     "Enter OpenAI API Key for judge LLM (translation + bias evaluation):",
                     value=os.getenv("OPENAI_API_KEY", ""),
                     type="password",
-                    help="Used for translating Mandarin responses and evaluating bias"
+                    help="Used for translating Mandarin responses and evaluating bias",
+                    disabled=st.session_state.processing_active
                 )
             
             with col2:
@@ -216,7 +222,8 @@ class StreamlitMenu:
                     value=2800,
                     min_value=1,
                     step=100,
-                    key="judge_rate_limit"
+                    key="judge_rate_limit",
+                    disabled=st.session_state.processing_active
                 )
 
         if st.button("Process All Prompts (Concurrent)", key="process_button", disabled=st.session_state.processing_active):
@@ -236,7 +243,6 @@ class StreamlitMenu:
 
             # Set processing flag to prevent interruption
             st.session_state.processing_active = True
-            st.session_state.activity_log = []
             
             # Create judge client and evaluator once (shared across all responders)
             judge_client = None
@@ -250,39 +256,35 @@ class StreamlitMenu:
                     judge_client = ChatGPTInterface(api_key=judge_api_key)
                     judge_client.set_model(judge_model)
                     evaluator = BiasEvaluator(api_key=judge_api_key, model=judge_model)
-                    self._log_activity("✓ Judge LLM initialized")
                 except Exception as e:
                     st.error(f"Failed to initialize judge LLM: {str(e)}")
                     st.session_state.processing_active = False
                     return
-            else:
-                self._log_activity("ℹ Bias evaluation disabled")
 
             # Create UI placeholders for real-time updates
-            st.info("⏳ Processing started... Do not refresh or close the page.")
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            activity_log_area = st.empty()
-            results_container = st.empty()
-            responder_status_area = st.empty()
+            status_placeholder = st.empty()
+            progress_area = st.empty()
 
             try:
-                self._log_activity(f"Starting processing with {len(selected_responders)} responder(s)")
                 all_results = []
                 total_responders = len(responder_api_keys)
                 completed_responders = 0
-                responder_status = {}
                 total_prompts = len(st.session_state.prompts)
-                prompts_per_responder = total_prompts * 2  # English + Mandarin
+                
+                # Initialize progress tracking for each responder
+                responder_progress = {responder_type: {"current": 0, "total": total_prompts} 
+                                     for responder_type in responder_api_keys.keys()}
+                
+                # Create progress callback
+                def update_progress(responder_type: str, current: int, total: int) -> None:
+                    responder_progress[responder_type]["current"] = current
                 
                 # Process responders concurrently using ThreadPoolExecutor
                 with ThreadPoolExecutor(max_workers=total_responders) as executor:
-                    # Submit all responder tasks with progress callback
+                    # Submit all responder tasks
                     future_to_responder = {}
                     for responder_type, api_key in responder_api_keys.items():
                         rate_limit = responder_rate_limits[responder_type]
-                        self._log_activity(f"🚀 Starting {responder_type}")
-                        responder_status[responder_type] = {"status": "running", "progress": 0}
                         
                         future = executor.submit(
                             self.driver.process_prompts,
@@ -293,88 +295,72 @@ class StreamlitMenu:
                             judge_client=judge_client,
                             evaluator=evaluator,
                             rate_limit_rpm=rate_limit,
-                            judge_rate_limit_rpm=judge_rate_limit
+                            judge_rate_limit_rpm=judge_rate_limit,
+                            progress_callback=update_progress
                         )
                         future_to_responder[future] = responder_type
                     
-                    # Track completion of each responder
-                    for future in as_completed(future_to_responder):
-                        responder_type = future_to_responder[future]
-                        completed_responders += 1
-                        
-                        try:
-                            results, fatal_error = future.result()
-                            all_results.extend(results)
-                            results_count = len([r for r in results if r.get('responder') == responder_type])
+                    # Track completion while displaying progress
+                    import time
+                    dot_cycle = 0
+                    last_update = time.time()
+                    dots_sequence = ["", ".", "..", "..."]
+                    
+                    while completed_responders < total_responders:
+                        # Update display every 0.33 seconds for smooth cycling
+                        current_time = time.time()
+                        if current_time - last_update > 0.33:
+                            dots = dots_sequence[dot_cycle % 4]
+                            dot_cycle += 1
                             
-                            if fatal_error:
-                                responder_status[responder_type]["status"] = "⚠️ stopped (fatal error)"
-                                self._log_activity(f"⚠️ {responder_type}: Fatal error encountered, stopping")
-                            else:
-                                responder_status[responder_type]["status"] = "✅ completed"
-                                responder_status[responder_type]["progress"] = 100
-                                self._log_activity(f"✅ {responder_type}: Completed ({results_count} results)")
+                            # Update status with cycling dots
+                            status_placeholder.text(f"Processing{dots}")
+                            
+                            # Update progress display
+                            with progress_area.container():
+                                # Per-responder progress
+                                for responder_type, progress_info in responder_progress.items():
+                                    pct = (progress_info["current"] / progress_info["total"]) * 100
+                                    st.progress(pct / 100, text=f"{responder_type}: {progress_info['current']}/{progress_info['total']}")
+                                
+                                # Overall progress (average)
+                                avg_pct = sum((p["current"] / p["total"]) for p in responder_progress.values()) / len(responder_progress) * 100
+                                st.progress(avg_pct / 100, text=f"Overall: {avg_pct:.0f}%")
+                            
+                            last_update = current_time
                         
-                        except Exception as e:
-                            responder_status[responder_type]["status"] = f"❌ error"
-                            self._log_activity(f"❌ {responder_type}: {str(e)}")
+                        # Check if any futures are done
+                        try:
+                            for future in as_completed(future_to_responder, timeout=0.1):
+                                responder_type = future_to_responder[future]
+                                results, fatal_error = future.result()
+                                all_results.extend(results)
+                                completed_responders += 1
+                                responder_progress[responder_type]["current"] = total_prompts
+                        except:
+                            pass
                         
-                        # Update progress and status
-                        progress = int(completed_responders / total_responders * 100)
-                        progress_bar.progress(progress)
-                        status_text.text(f"✓ Completed {completed_responders}/{total_responders} responders | Total results: {len(all_results)}")
-                        self._update_activity_log(activity_log_area)
-                        self._update_responder_status(responder_status_area, responder_status)
+                        time.sleep(0.05)
 
                 # Processing complete
                 st.session_state.results = all_results
                 st.session_state.processing_active = False
+                st.session_state.redirect_to_results = True
                 
-                progress_bar.progress(100)
-                status_text.text("✓ Processing complete!")
-                self._log_activity("✓ All responders finished")
-                self._update_activity_log(activity_log_area)
+                with progress_area.container():
+                    for responder_type in responder_progress.keys():
+                        st.progress(1.0, text=f"{responder_type}: {total_prompts}/{total_prompts}")
+                    st.progress(1.0, text="Overall: 100%")
                 
+                status_placeholder.empty()
                 st.success(f"✅ Processing complete! {len(st.session_state.results)} total results from {total_responders} responder(s)")
-                
-                # Show responder status summary
-                st.subheader("Processing Summary")
-                for responder_type, status_info in responder_status.items():
-                    st.write(f"• {responder_type}: {status_info['status']}")
 
             except Exception as e:
                 st.session_state.processing_active = False
                 st.error(f"Error processing prompts: {str(e)}")
-                self._log_activity(f"❌ Error: {str(e)}")
-                self._update_activity_log(activity_log_area)
-
-    def _log_activity(self, message: str) -> None:
-        """Add a message to the activity log."""
-        from datetime import datetime
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        st.session_state.activity_log.append(f"[{timestamp}] {message}")
-        # Keep only the last 50 log entries to avoid memory issues
-        if len(st.session_state.activity_log) > 50:
-            st.session_state.activity_log = st.session_state.activity_log[-50:]
-    
-    def _update_activity_log(self, log_area) -> None:
-        """Update the activity log display."""
-        with log_area.container():
-            st.markdown("**Recent Activity:**")
-            # Display log in reverse order (newest first)
-            for entry in reversed(st.session_state.activity_log[-20:]):
-                st.text(entry)
-    
-    def _update_responder_status(self, status_area, responder_status: Dict) -> None:
-        """Update the responder status display."""
-        with status_area.container():
-            st.markdown("**Responder Status:**")
-            cols = st.columns(len(responder_status))
-            for col, (responder_type, status_info) in zip(cols, responder_status.items()):
-                with col:
-                    status_text = status_info.get('status', 'pending')
-                    progress = status_info.get('progress', 0)
-                    st.metric(responder_type, status_text, delta=f"{progress}%")
+                
+            finally:
+                st.rerun()
 
     def view_results_section(self) -> None:
         """Render the view results section with download option."""
